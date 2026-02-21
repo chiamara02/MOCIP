@@ -1,0 +1,255 @@
+import dk.dtu.droolsui.*
+
+
+// -------------------------------------------------------------------------------------------------------
+// QUERIES
+// -------------------------------------------------------------------------------------------------------
+query "value" (String name, double num)
+    s: String( this contains name, ! s.replaceAll("[^0-9.]","").isEmpty)
+    num := Double () from Double.parseDouble(s.replaceAll("[^0-9.]",""))
+end
+
+// -------------------------------------------------------------------------------------------------------
+// DATA TYPES
+// -------------------------------------------------------------------------------------------------------
+declare Failure
+    source : String
+    reason : String
+end
+
+declare ReliefValve
+    status: String
+end
+
+declare Heater
+    status: String
+end
+
+declare SprayValve
+    status: String
+end
+
+declare PressureReading
+    value: double
+end
+
+declare TemperatureReading
+    value: double
+end
+
+declare WaterLevelreading
+    value: double
+end
+
+
+// -------------------------------------------------------------------------------------------------------
+// READINGS FROM INPUT FIELD
+// -------------------------------------------------------------------------------------------------------
+rule "Read pressure"
+when
+    s: String( toLowerCase contains "pressure")
+    value(s, p;)
+
+then
+
+    PressureReading pr = new PressureReading();
+    pr.setValue(p);
+    insert(pr);
+    Printer.print("Pressure measured (" + p + ")");
+end
+
+rule "Read temperature"
+when
+    s: String( toLowerCase contains "temperature")
+    value(s, t;)
+
+then
+    TemperatureReading tr = new TemperatureReading();
+    tr.setValue(t);
+    insert(tr);
+     Printer.print("Temperature mesured (" + t + ")");
+end
+
+
+rule "Read water level"
+when
+    s: String( toLowerCase contains "water level")
+    value(s, wl;)
+
+then
+
+    WaterLevelreading wlr = new WaterLevelreading();
+    wlr.setValue(wl);
+    insert(wlr);
+    Printer.print("Pressure measured (" + wl + ")");
+end
+
+
+rule "Parse Relief Valve Status"
+when
+    s : String(toLowerCase contains "relief", toLowerCase contains "valve")
+then
+    String s1 = s.toLowerCase().contains("open") ? "OPEN" : "CLOSE";
+    ReliefValve rv = new ReliefValve();
+    rv.setStatus(s1);
+    insert(rv);
+end
+
+rule "Parse Spray Valve Status"
+when
+    s : String(toLowerCase contains "spray", toLowerCase contains "valve")
+then
+    String s1 = s.toLowerCase().contains("open") ? "OPEN" : "CLOSE";
+    SprayValve sv = new SprayValve();
+    sv.setStatus(s1);
+    insert(sv);
+end
+
+rule "Parse Heater Status"
+when
+    s : String(toLowerCase contains "heater")
+then
+    String s1 = s.toLowerCase().contains("on") ? "ON" : "OFF";
+    Heater h = new Heater();
+    h.setStatus(s1);
+    insert(h);
+end
+
+// -------------------------------------------------------------------------------------------------------
+// FAILURE DIAGNOSING LOGIC
+// -------------------------------------------------------------------------------------------------------
+rule "Detect pressure failure"
+when
+
+    PressureReading(value < 2250)
+then
+    Failure f = new Failure();
+    f.setSource("Pressure");
+    f.setReason("Unknown");
+    insert(f);
+    Printer.print("Low pressure detected, inspecting reason...");
+end
+
+rule "Inspect temperature"
+when
+    exists Failure(source == "Pressure", reason == "Unknown")
+    not TemperatureReading()
+then
+    Printer.print("Insert temperature measurement");
+end
+
+rule "Inspect water level"
+when
+    exists Failure(source == "Pressure", reason == "Unknown")
+    not WaterLevelreading()
+then
+    Printer.print("Insert water level measurement");
+end
+
+rule "Temperature too low"
+when
+    exists Failure(source == "Pressure", reason == "Unknown")
+    exists TemperatureReading(value < 80)
+then
+    Failure f = new Failure();
+    f.setSource("Temperature");
+    f.setReason("Unknown");
+    insert(f);
+    Printer.print("Temperature too low");
+end
+
+rule "Water level too low"
+when
+    exists Failure(source == "Pressure", reason == "Unknown")
+    exists WaterLevelreading(value < 50)
+then
+    Failure f = new Failure();
+     f.setSource("Water level");
+     f.setReason("Unknown");
+    insert(f);
+    Printer.print("Water level too low");
+end
+
+rule "Inspect heater"
+when
+    exists Failure(source == "Temperature", reason == "Unknown")
+    not Heater()
+then
+    Printer.print("Insert heater status");
+end
+
+rule "Inspect spray valve"
+when
+    exists Failure(source == "Temperature", reason == "Unknown")
+    not SprayValve()
+then
+    Printer.print("Insert spray valve status");
+end
+
+rule "Inspect relief valve"
+when
+    exists Failure(source == "Water level", reason == "Unknown")
+    not ReliefValve()
+then
+    Printer.print("Insert relief valve status");
+end
+
+// -------------------------------------------------------------------------------------------------------
+// ROOT CAUSE INSPECTION
+// -------------------------------------------------------------------------------------------------------
+
+rule "Heater failure"
+when
+    exists Heater(status == "OFF")
+    $f : Failure(source == "Temperature", reason == "Unknown")
+then
+    modify($f) {
+          setReason("Heater failure")
+      }
+
+end
+
+rule "Spray valve failure"
+when
+    exists SprayValve(status == "OPEN")
+    $f : Failure(source == "Temperature", reason == "Unknown")
+then
+   modify($f) {
+          setReason("Spray valve failure")
+      }
+
+end
+
+rule "Relief valve failure"
+when
+    exists ReliefValve(status == "OPEN")
+    $f : Failure(source == "Water level", reason == "Unknown")
+then
+   modify($f) {
+          setReason("Relief valve failure")
+      }
+
+end
+
+rule "Temperature too low reason"
+when
+    $f : Failure(source == "Temperature", reason != "Unknown")
+    $f1 : Failure(source == "Pressure", reason == "Unknown")
+then
+    modify($f1) {
+          setReason($f.getReason())
+      }
+      Printer.print("Root cause identified: " + $f1.getReason());
+    end
+
+rule "Water level too low reason"
+when
+    $f : Failure(source == "Water level", reason != "Unknown")
+    $f1 : Failure(source == "Pressure", reason == "Unknown")
+then
+    modify($f1) {
+          setReason($f.getReason())
+      }
+      Printer.print("Root cause identified: " + $f1.getReason());
+    end
+
