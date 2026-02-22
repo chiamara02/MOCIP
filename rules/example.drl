@@ -12,10 +12,21 @@ end
 // -------------------------------------------------------------------------------------------------------
 // DATA TYPES
 // -------------------------------------------------------------------------------------------------------
+
+// Abstract data types to handle failures and limits
+
 declare Failure
     source : String
     reason : String
 end
+
+declare Limit
+    parameter : String @key
+    lowValue  : double
+    highValue : double
+end
+
+// Specific system components and readings
 
 declare ReliefValve
     status: String
@@ -55,6 +66,7 @@ then
     PressureReading pr = new PressureReading();
     pr.setValue(p);
     insert(pr);
+    retract(s);
     Printer.print("Pressure measured (" + p + ")");
 end
 
@@ -67,6 +79,7 @@ then
     TemperatureReading tr = new TemperatureReading();
     tr.setValue(t);
     insert(tr);
+    retract(s);
      Printer.print("Temperature mesured (" + t + ")");
 end
 
@@ -81,7 +94,8 @@ then
     WaterLevelreading wlr = new WaterLevelreading();
     wlr.setValue(wl);
     insert(wlr);
-    Printer.print("Pressure measured (" + wl + ")");
+    retract(s);
+    Printer.print("Water level measured (" + wl + ")");
 end
 
 
@@ -93,6 +107,7 @@ then
     ReliefValve rv = new ReliefValve();
     rv.setStatus(s1);
     insert(rv);
+    retract(s);
 end
 
 rule "Parse Spray Valve Status"
@@ -103,6 +118,7 @@ then
     SprayValve sv = new SprayValve();
     sv.setStatus(s1);
     insert(sv);
+    retract(s);
 end
 
 rule "Parse Heater Status"
@@ -113,20 +129,55 @@ then
     Heater h = new Heater();
     h.setStatus(s1);
     insert(h);
+    retract(s);
 end
 
 // -------------------------------------------------------------------------------------------------------
 // FAILURE DIAGNOSING LOGIC
 // -------------------------------------------------------------------------------------------------------
+
+// Data initialization and cleanup
+
+rule "Initialize Safety Limits"
+// runs before anything else
+when
+    not Limit(parameter == "pressure")
+then
+    insert(new Limit("pressure", 2210.0, 2335.0));
+    insert(new Limit("temperature", 325.0, 400.0));
+    insert(new Limit("water level", 17.0, 50.0));
+    //Printer.print("Safety limits initialized.");
+end
+
+rule "Cleanup All Data"
+salience -100 // Fires last
+when
+    exists Failure(source == "Pressure", reason != "Unknown")
+    $data : Object(
+            this instanceof PressureReading ||
+            this instanceof TemperatureReading ||
+            this instanceof WaterLevelreading ||
+            this instanceof ReliefValve ||
+            this instanceof SprayValve ||
+            this instanceof Heater
+        )
+    then
+        retract($data);
+    Printer.print("--- System Reset: Input data cleared for next diagnosis ---");
+end
+
+
+// Diagnosis logic
+
 rule "Detect pressure failure"
 when
-
-    PressureReading(value < 2250)
+    $l: Limit(parameter=="pressure")
+    PressureReading(value < $l.lowValue)
 then
     Failure f = new Failure();
     f.setSource("Pressure");
     f.setReason("Unknown");
-    insert(f);
+    insertLogical(f);
     Printer.print("Low pressure detected, inspecting reason...");
 end
 
@@ -148,25 +199,27 @@ end
 
 rule "Temperature too low"
 when
+    $l : Limit(parameter=="temperature")
     exists Failure(source == "Pressure", reason == "Unknown")
-    exists TemperatureReading(value < 80)
+    exists TemperatureReading(value < $l.lowValue)
 then
     Failure f = new Failure();
     f.setSource("Temperature");
     f.setReason("Unknown");
-    insert(f);
+    insertLogical(f);
     Printer.print("Temperature too low");
 end
 
 rule "Water level too low"
 when
+    $l : Limit(parameter=="water level")
     exists Failure(source == "Pressure", reason == "Unknown")
-    exists WaterLevelreading(value < 50)
+    exists WaterLevelreading(value < $l.lowValue)
 then
     Failure f = new Failure();
      f.setSource("Water level");
      f.setReason("Unknown");
-    insert(f);
+    insertLogical(f);
     Printer.print("Water level too low");
 end
 
