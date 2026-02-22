@@ -17,6 +17,7 @@ end
 
 declare Failure
     source : String
+    deviation: String
     reason : String
 end
 
@@ -153,32 +154,39 @@ rule "Cleanup All Data"
 salience -100 // Fires last
 when
     exists Failure(source == "Pressure", reason != "Unknown")
-    $data : Object(
-            this instanceof PressureReading ||
-            this instanceof TemperatureReading ||
-            this instanceof WaterLevelreading ||
-            this instanceof ReliefValve ||
-            this instanceof SprayValve ||
-            this instanceof Heater
-        )
+    $fact : Object( !(this instanceof Limit) , !(this instanceof Failure) )
     then
-        retract($data);
+        retract($fact);
     Printer.print("--- System Reset: Input data cleared for next diagnosis ---");
 end
 
 
 // Diagnosis logic
 
-rule "Detect pressure failure"
+rule "Detect low pressure failure"
 when
     $l: Limit(parameter=="pressure")
     PressureReading(value < $l.lowValue)
 then
     Failure f = new Failure();
     f.setSource("Pressure");
+    f.setDeviation("LOW");
     f.setReason("Unknown");
-    insertLogical(f);
+    insert(f);
     Printer.print("Low pressure detected, inspecting reason...");
+end
+
+rule "Detect high pressure failure"
+when
+    $l: Limit(parameter=="pressure")
+    PressureReading(value > $l.highValue)
+then
+    Failure f = new Failure();
+    f.setSource("Pressure");
+    f.setDeviation("HIGH");
+    f.setReason("Unknown");
+    insert(f);
+    Printer.print("High pressure detected, inspecting reason...");
 end
 
 rule "Inspect temperature"
@@ -200,27 +208,57 @@ end
 rule "Temperature too low"
 when
     $l : Limit(parameter=="temperature")
-    exists Failure(source == "Pressure", reason == "Unknown")
+    exists Failure(source == "Pressure", deviation == "LOW", reason == "Unknown")
     exists TemperatureReading(value < $l.lowValue)
 then
     Failure f = new Failure();
     f.setSource("Temperature");
+    f.setDeviation("LOW");
     f.setReason("Unknown");
-    insertLogical(f);
+    insert(f);
     Printer.print("Temperature too low");
+end
+
+rule "Temperature too high"
+when
+    $l : Limit(parameter=="temperature")
+    exists Failure(source == "Pressure", deviation == "HIGH", reason == "Unknown")
+    exists TemperatureReading(value > $l.highValue)
+then
+    Failure f = new Failure();
+    f.setSource("Temperature");
+    f.setDeviation("HIGH");
+    f.setReason("Unknown");
+    insert(f);
+    Printer.print("Temperature too high");
 end
 
 rule "Water level too low"
 when
     $l : Limit(parameter=="water level")
-    exists Failure(source == "Pressure", reason == "Unknown")
+    exists Failure(source == "Pressure", deviation == "LOW", reason == "Unknown")
     exists WaterLevelreading(value < $l.lowValue)
 then
     Failure f = new Failure();
      f.setSource("Water level");
+     f.setDeviation("LOW");
      f.setReason("Unknown");
-    insertLogical(f);
+    insert(f);
     Printer.print("Water level too low");
+end
+
+rule "Water level too high"
+when
+    $l : Limit(parameter=="water level")
+    exists Failure(source == "Pressure", deviation == "HIGH", reason == "Unknown")
+    exists WaterLevelreading(value > $l.highValue)
+then
+    Failure f = new Failure();
+     f.setSource("Water level");
+     f.setDeviation("HIGH");
+     f.setReason("Unknown");
+    insert(f);
+    Printer.print("Water level too high");
 end
 
 rule "Inspect heater"
@@ -251,21 +289,20 @@ end
 // ROOT CAUSE INSPECTION
 // -------------------------------------------------------------------------------------------------------
 
-rule "Heater failure"
+rule "Heater off failure"
 when
     exists Heater(status == "OFF")
-    $f : Failure(source == "Temperature", reason == "Unknown")
+    $f : Failure(source == "Temperature", deviation== "LOW", reason == "Unknown")
 then
     modify($f) {
           setReason("Heater failure")
       }
-
 end
 
-rule "Spray valve failure"
+rule "Spray valve open failure"
 when
     exists SprayValve(status == "OPEN")
-    $f : Failure(source == "Temperature", reason == "Unknown")
+    $f : Failure(source == "Temperature", deviation== "LOW", reason == "Unknown")
 then
    modify($f) {
           setReason("Spray valve failure")
@@ -273,10 +310,10 @@ then
 
 end
 
-rule "Relief valve failure"
+rule "Relief valve open failure"
 when
     exists ReliefValve(status == "OPEN")
-    $f : Failure(source == "Water level", reason == "Unknown")
+    $f : Failure(source == "Water level", deviation== "LOW", reason == "Unknown")
 then
    modify($f) {
           setReason("Relief valve failure")
@@ -284,7 +321,39 @@ then
 
 end
 
-rule "Temperature too low reason"
+rule "Heater on failure"
+when
+    exists Heater(status == "ON")
+    $f : Failure(source == "Temperature", deviation== "HIGH", reason == "Unknown")
+then
+    modify($f) {
+          setReason("Heater failure")
+      }
+end
+
+rule "Spray valve closed failure"
+when
+    exists SprayValve(status == "CLOSE")
+    $f : Failure(source == "Temperature", deviation== "HIGH", reason == "Unknown")
+then
+   modify($f) {
+          setReason("Spray valve failure")
+      }
+
+end
+
+rule "Relief valve closed failure"
+when
+    exists ReliefValve(status == "CLOSE")
+    $f : Failure(source == "Water level", deviation== "HIGH", reason == "Unknown")
+then
+   modify($f) {
+          setReason("Relief valve failure")
+      }
+
+end
+
+rule "Temperature failure reason"
 when
     $f : Failure(source == "Temperature", reason != "Unknown")
     $f1 : Failure(source == "Pressure", reason == "Unknown")
@@ -295,7 +364,7 @@ then
       Printer.print("Root cause identified: " + $f1.getReason());
     end
 
-rule "Water level too low reason"
+rule "Water level failure reason"
 when
     $f : Failure(source == "Water level", reason != "Unknown")
     $f1 : Failure(source == "Pressure", reason == "Unknown")
